@@ -31,7 +31,8 @@ export async function generateStaticParams() {
       return doc.slug !== 'home'
     })
     .map(({ slug }) => {
-      return { slug }
+      // Catch-all requires slug as array
+      return { slug: [slug] }
     })
 
   return params
@@ -39,27 +40,39 @@ export async function generateStaticParams() {
 
 type Args = {
   params: Promise<{
-    slug?: string
+    slug?: string[]
   }>
 }
 
 export default async function Page({ params: paramsPromise }: Args) {
   const { isEnabled: draft } = await draftMode()
-  const { slug = 'home' } = await paramsPromise
-  // Decode to support slugs with special characters
-  const decodedSlug = decodeURIComponent(slug)
-  const url = '/' + decodedSlug
-  let page: RequiredDataFromCollectionSlug<'pages'> | null
+  const { slug: slugSegments } = await paramsPromise
 
-  page = await queryPageBySlug({
-    slug: decodedSlug,
-  })
+  // Handle catch-all: slug is an array of path segments
+  // e.g., /post/my-article → ['post', 'my-article']
+  // e.g., /about → ['about']
+  const slugArray = slugSegments || ['home']
+  const fullPath = slugArray.map((segment) => decodeURIComponent(segment)).join('/')
+  const url = '/' + fullPath
 
-  // Remove this code once your website is seeded
-  if (!page && slug === 'home') {
-    page = homeStatic
+  // For page lookup, use the last segment (pages have single-segment slugs)
+  const pageSlug = slugArray.length === 1 ? decodeURIComponent(slugArray[0]) : null
+
+  let page: RequiredDataFromCollectionSlug<'pages'> | null = null
+
+  // Only look up pages for single-segment URLs
+  if (pageSlug) {
+    page = await queryPageBySlug({
+      slug: pageSlug,
+    })
+
+    // Remove this code once your website is seeded
+    if (!page && pageSlug === 'home') {
+      page = homeStatic
+    }
   }
 
+  // For multi-segment URLs or missing pages, check redirects
   if (!page) {
     return <PayloadRedirects url={url} />
   }
@@ -81,9 +94,15 @@ export default async function Page({ params: paramsPromise }: Args) {
 }
 
 export async function generateMetadata({ params: paramsPromise }: Args): Promise<Metadata> {
-  const { slug = 'home' } = await paramsPromise
-  // Decode to support slugs with special characters
-  const decodedSlug = decodeURIComponent(slug)
+  const { slug: slugSegments } = await paramsPromise
+  const slugArray = slugSegments || ['home']
+
+  // Only generate metadata for single-segment URLs (pages)
+  if (slugArray.length !== 1) {
+    return {}
+  }
+
+  const decodedSlug = decodeURIComponent(slugArray[0])
   const page = await queryPageBySlug({
     slug: decodedSlug,
   })
